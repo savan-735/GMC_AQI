@@ -1,3 +1,4 @@
+#include "debug_serial.h"
 #include "bme680.h"
 #include <Wire.h>
 
@@ -61,7 +62,7 @@ void BME680_Init(void)
 
     if (bme68x_init(&bme) != BME68X_OK)
     {
-        Serial.println("BME680 init failed");
+        USBSerial.println("BME680 init failed");
         //while (1);
     }
 
@@ -77,7 +78,7 @@ void BME680_Init(void)
     /* Disable gas heater */
     bme68x_set_heatr_conf(BME68X_DISABLE, NULL, &bme);
 
-    Serial.println("BME680 ready");
+    USBSerial.println("BME680 ready");
 }
 
 /* ---------- This is your old LOOP logic ---------- */
@@ -95,16 +96,16 @@ void BME680_Process()
         weather_data.BME680_Humidity    = data.humidity;
         weather_data.BME680_Pressure    = data.pressure / 100.0f;   // Pa → hPa
 
-        Serial.print("BME680 T: ");
-        Serial.print(weather_data.BME680_Temperature, 2);
-        Serial.print(" °C | H: ");
-        Serial.print(weather_data.BME680_Humidity, 2);
-        Serial.print(" % | P: ");
-        Serial.print(weather_data.BME680_Pressure, 2);
-        Serial.println(" hPa");
+        USBSerial.print("BME680 T: ");
+        USBSerial.print(weather_data.BME680_Temperature, 2);
+        USBSerial.print(" °C | H: ");
+        USBSerial.print(weather_data.BME680_Humidity, 2);
+        USBSerial.print(" % | P: ");
+        USBSerial.print(weather_data.BME680_Pressure, 2);
+        USBSerial.println(" hPa");
     }
     else
     {
-        Serial.println("BME680 read error");
+        USBSerial.println("BME680 read error");
     }
 }

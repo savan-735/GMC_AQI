@@ -1,4 +1,5 @@
-#include "veml7700.h"
+#include "debug_serial.h"
+#include "veml7700.h"//Ambiant Light
 #include "data_structure.h"
 
 extern weather_station_global_structure_t weather_data;
@@ -15,8 +16,8 @@ static veml7700_i2c_status_t write16(uint8_t reg, uint16_t value)
     uint8_t err = Wire.endTransmission();
     if (err != 0) 
     {
-        Serial.print("I2C write error, code: ");
-        Serial.println(err);
+        USBSerial.print("I2C write error, code: ");
+        USBSerial.println(err);
         return VEML7700_I2C_ERR_WRITE;
     }
 
@@ -33,16 +34,16 @@ static veml7700_i2c_status_t read16(uint8_t reg, uint16_t *value)
     uint8_t err = Wire.endTransmission(false);  // repeated start
     if (err != 0) 
     {
-        Serial.print("I2C address error, code: ");
-        Serial.println(err);
+        USBSerial.print("I2C address error, code: ");
+        USBSerial.println(err);
         return VEML7700_I2C_ERR_BEGIN;
     }
 
     uint8_t bytesRead = Wire.requestFrom((uint8_t)VEML7700_ADDR, (uint8_t)2);
     if (bytesRead != 2) 
     {
-        Serial.print("I2C read length error, bytes: ");
-        Serial.println(bytesRead);
+        USBSerial.print("I2C read length error, bytes: ");
+        USBSerial.println(bytesRead);
         return VEML7700_I2C_ERR_READ_LEN;
     }
 
@@ -60,9 +61,9 @@ void veml7700_init(void)
     //Wire.begin(SDA_PIN, SCL_PIN);
     veml7700_i2c_status_t status = write16(ALS_CONF_REG, 0x0000); // Gain=1/4, IT=100ms
     if (status != VEML7700_I2C_OK) {
-        Serial.println("VEML7700 config failed!");
+        USBSerial.println("VEML7700 config failed!");
     } else {
-        Serial.println("VEML7700 initialized successfully");
+        USBSerial.println("VEML7700 initialized successfully");
     }
 }
 
@@ -76,10 +77,10 @@ void veml7700_task(void)
     {
         float lux = als_raw * 0.0576f;      // default conversion factor
         weather_data.lux = lux;             // store into global structure
-        Serial.print("Ambient Light: ");
-        Serial.print(weather_data.lux);
-        Serial.println(" lx");
+        USBSerial.print("Ambient Light: ");
+        USBSerial.print(weather_data.lux);
+        USBSerial.println(" lx");
     } else {
-        Serial.println("Failed to read ALS data");
+        USBSerial.println("Failed to read ALS data");
     }
 }

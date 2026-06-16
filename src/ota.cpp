@@ -2,7 +2,7 @@
 This library is specifically designed for the Over the Air (OTA) process, facilitating connections to an access point using a predefined ID and password. 
 We believe this matter has already been resolved.
 */
-
+#include "debug_serial.h"
 #include<Arduino.h>
 #include "ota.h"
 
@@ -36,7 +36,7 @@ void init_ssl_ota()
     }
 
     //Print info
-    Serial.println("Start updating " + type);
+    USBSerial.println("Start updating " + type);
   });
 
 
@@ -44,16 +44,15 @@ void init_ssl_ota()
   //Event Handler - Triggered when OTA end
   ArduinoOTA.onEnd([]() 
   {
-    Serial.println("\n OTA update End");
+    USBSerial.println("\n OTA update End");
   });
   
-
 
   //-----------------------------------------------------------------------------------------------
   //Function called during OTA in progress
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) 
   {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    USBSerial.printf("Progress: %u%%\r", (progress / (total / 100)));
   });
 
 
@@ -61,22 +60,22 @@ void init_ssl_ota()
   //Function Triggered during OTA Error 
   ArduinoOTA.onError([](ota_error_t error) 
   {
-    Serial.printf("Error[%u]: ", error);
+    USBSerial.printf("Error[%u]: ", error);
     if (error == OTA_AUTH_ERROR) 
     {
-      Serial.println("Auth Failed");
+      USBSerial.println("Auth Failed");
     } else if (error == OTA_BEGIN_ERROR) 
     {
-      Serial.println("Begin Failed");
+      USBSerial.println("Begin Failed");
     } else if (error == OTA_CONNECT_ERROR) 
     {
-      Serial.println("Connect Failed");
+      USBSerial.println("Connect Failed");
     } else if (error == OTA_RECEIVE_ERROR) 
     {
-      Serial.println("Receive Failed");
+      USBSerial.println("Receive Failed");
     } else if (error == OTA_END_ERROR) 
     {
-      Serial.println("End Failed");
+      USBSerial.println("End Failed");
     }
   });
 }

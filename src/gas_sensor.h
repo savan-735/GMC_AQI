@@ -9,6 +9,7 @@
 #define GAS_RX_PIN          15
 #define GAS_TX_PIN          16
 
+
 // ---------------- MUX PINS ----------------
 #define S0                  35
 #define S1                  36
@@ -23,6 +24,8 @@
 // ---------------- FUNCTION ----------------
 void gas_sensor_init(void);
 void gas_sensor_task();
+//void sds_task();
+//void sds_task_safe();
 void gas_sensor_print();
 
 #endif

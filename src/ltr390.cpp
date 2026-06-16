@@ -1,4 +1,5 @@
-#include "ltr390.h"
+#include "debug_serial.h"
+#include "ltr390.h"//UV Radiation
 #include "data_structure.h"
 
 extern weather_station_global_structure_t weather_data;
@@ -12,10 +13,10 @@ static ltr390_i2c_status_t writeRegister(uint8_t reg, uint8_t value) {
   uint8_t err = Wire.endTransmission();
     if (err != 0) 
     {
-      Serial.print("I2C write error, reg 0x");
-      Serial.print(reg, HEX);
-      Serial.print(" code: ");
-      Serial.println(err);
+      USBSerial.print("I2C write error, reg 0x");
+      USBSerial.print(reg, HEX);
+      USBSerial.print(" code: ");
+      USBSerial.println(err);
       return LTR390_I2C_ERR_WRITE;
     }
   return LTR390_I2C_OK;
@@ -76,15 +77,15 @@ void init_LTR390 (void)
   uint8_t partID;
     if (readRegister8(LTR390_PART_ID, &partID) != LTR390_I2C_OK) 
     {
-      Serial.println("ERROR: LTR390 not responding");
+      USBSerial.println("ERROR: LTR390 not responding");
     }
 
-    Serial.print("LTR390 Part ID: 0x");
-    Serial.println(partID, HEX);
+    USBSerial.print("LTR390 Part ID: 0x");
+    USBSerial.println(partID, HEX);
 
     if (partID != 0xB2) 
     {
-      Serial.println("ERROR: Invalid LTR390 ID");
+      USBSerial.println("ERROR: Invalid LTR390 ID");
     }
 
 
@@ -106,7 +107,7 @@ void read_LTR390 (void)
   uint8_t status;
   if (readRegister8(LTR390_STATUS, &status) != LTR390_I2C_OK) 
   {
-    Serial.println("Failed to read STATUS");
+    USBSerial.println("Failed to read STATUS");
     return;
   }
 
@@ -123,16 +124,16 @@ void read_LTR390 (void)
       // Convert UVI to irradiance (µW/cm²)
       weather_data.uv_irradiance = weather_data.uvi * UVI_TO_IRRADIANCE;
 
-      Serial.print(F("UV Raw: "));
-      Serial.print(weather_data.uv_raw);
-      Serial.print(F(" | UVI: "));
-      Serial.print(weather_data.uvi, 2);
-      Serial.print(F(" | Irradiance: "));
-      Serial.print(weather_data.uv_irradiance, 2);
-      Serial.println(F(" µW/cm²"));
+      USBSerial.print(F("UV Raw: "));
+      USBSerial.print(weather_data.uv_raw);
+      USBSerial.print(F(" | UVI: "));
+      USBSerial.print(weather_data.uvi, 2);
+      USBSerial.print(F(" | Irradiance: "));
+      USBSerial.print(weather_data.uv_irradiance, 2);
+      USBSerial.println(F(" µW/cm²"));
     }
     else {
-      Serial.println("Failed to read UV data");
+      USBSerial.println("Failed to read UV data");
     }
   }
 }

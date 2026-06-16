@@ -1,5 +1,6 @@
 #include <Arduino.h>
-
+#include <Adafruit_NeoPixel.h>                                    //RGB Light controll
+#include "debug_serial.h"
 #include <timer.h>                                                // Timer operation
 #include "esp_task_wdt.h"                                         // WatchDOG
 #include <esp_intr_alloc.h>
@@ -17,15 +18,55 @@
 #include <gas_sensor.h>                                           // For UART Multiplexer gases sensor
 #include <veml7700.h>                                             // For Ambient light sensor
 #include <ltr390.h>                                               // For UV Radiation sensor 
-#include <sps30.h>                                                // For PM sensor 
+#include <sds011.h>                                                // For PM sensor 
 #include <s300e.h>                                                // For CO2 sensor
 #include <bme680.h>                                               // For BME680 sensor
-#include <gsm.h>
+// #include <gsm.h>
+
+//-----------------------------------------------------------------------------------------------------------------
+// GSM (M66) UART configuration
+//-----------------------------------------------------------------------------------------------------------------
+#define GSM_RX_PIN        17
+#define GSM_TX_PIN        18
+
+//-----------------------------------------------------------------------------------------------------------------
+// RGB On board LED Controll
+//-----------------------------------------------------------------------------------------------------------------
+#define RGB_LED_PIN       48    //GPIO-48
+#define NUM_LEDS          1
+
+Adafruit_NeoPixel pixel(NUM_LEDS, RGB_LED_PIN, NEO_GRB + NEO_KHZ800);
+
+// GSM Config
+String gsmServerIP   = "103.49.103.72";//"182.237.15.204"//(GMC SERVER)
+String gsmServerPort = "5059";
+#define GSM_APN           "airtelgprs.com"
+
+HardwareSerial gsm(2);   // UART2
+
+typedef struct
+{
+  bool power_on;
+  bool sim_ready;
+  bool network_registered;
+  bool gprs_attached;
+  bool tcp_connected;
+  int  rssi;
+
+  String last_error;
+  String last_tx_time;
+} gsm_status_t;
+
+gsm_status_t gsm_status;
 
 //-----------------------------------------------------------------------------------------------------------------
 // W5500 Ethernet Module SPI configuration
 #define W5500_CS                        5
 #define W5500_RST                       4
+
+//-----------------------------------------------------------------------------------------------------------------
+// DEVICE ID SETTING
+#define DEVICE_ID                       "AQI_011"
 
 //-----------------------------------------------------------------------------------------------------------------
 // WiFi credentials - Router/AP ID & Password for hosting Web Page 
@@ -83,6 +124,163 @@ void Send_Data_If_Ethernet_Connected();
 void startWebServer();
 void cleanupClients();
 uint8_t xor_checksum(const char *data, uint16_t length);
+
+void blinkGSMLED()
+{
+    pixel.setPixelColor(0, pixel.Color(0, 255, 0)); // Green
+    pixel.show();
+
+    delay(250);
+
+    pixel.clear();
+    pixel.show();
+}
+
+void blinkGSMError()
+{
+    pixel.setPixelColor(0, pixel.Color(255, 0, 0)); // Red
+    pixel.show();
+
+    delay(250);
+
+    pixel.clear();
+    pixel.show();
+}
+
+bool gsmSendAT(const String &cmd, const String &expect, uint32_t timeout)
+{
+  gsm.println(cmd);
+  uint32_t start = millis();
+  String resp;
+
+  while (millis() - start < timeout)
+  {
+    while (gsm.available())
+    {
+      resp += (char)gsm.read();
+      if (resp.indexOf(expect) >= 0) return true;
+      if (resp.indexOf("ERROR") >= 0) break;
+    }
+    esp_task_wdt_reset();
+  }
+
+  gsm_status.last_error = resp;
+  return false;
+}
+
+
+bool gsm_Init()
+{
+  gsm.begin(115200, SERIAL_8N1, GSM_RX_PIN, GSM_TX_PIN);
+
+  if (!gsmSendAT("AT", "OK", 1000)) return false;
+  gsm_status.power_on = true;
+
+  gsmSendAT("ATE0", "OK", 1000);
+  gsmSendAT("AT+CMEE=2", "OK", 1000);
+
+  gsm_status.sim_ready = gsmSendAT("AT+CPIN?", "READY", 5000);
+  gsm_status.network_registered =
+      gsmSendAT("AT+CREG?", "0,1", 5000) || gsmSendAT("AT+CREG?", "0,5", 5000);
+
+  gsmSendAT("AT+CSQ", "OK", 2000);
+  gsm_status.rssi = -1;   // You can parse CSQ later
+
+  gsm_status.gprs_attached = gsmSendAT("AT+CGATT=1", "OK", 5000);
+
+  gsmSendAT("AT+CGDCONT=1,\"IP\",\"" GSM_APN "\"", "OK", 2000);
+  gsmSendAT("AT+QIREGAPP", "OK", 2000);
+
+  return gsmSendAT("AT+QIACT", "OK", 10000);
+}
+
+
+String buildGSM_JSON()
+{
+  String json = "{";
+  json += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
+  json += "\"CO_ppm\":"  + String(weather_data.CO_ppm, 2) + ",";
+  json += "\"O3_ppm\":"  + String(weather_data.O3_ppm, 3) + ",";
+  json += "\"NO2_ppm\":" + String(weather_data.NO2_ppm, 3) + ",";
+  json += "\"H2S_ppm\":" + String(weather_data.H2S_ppm, 3) + ",";
+  json += "\"SO2_ppm\":" + String(weather_data.SO2_ppm, 3) + ",";
+  json += "\"NH3_ppm\":" + String(weather_data.NH3_ppm, 2) + ",";
+  json += "\"CO2_ppm\":" + String(weather_data.CO2_ppm) + ",";
+  json += "\"PM2_5\":"   + String(weather_data.pm2_5, 2) + ",";
+  json += "\"PM10\":"    + String(weather_data.pm10, 2) + ",";
+  json += "\"lux\":"     + String(weather_data.lux, 2) + ",";
+  json += "\"uvi\":"     + String(weather_data.uvi, 2) + ",";
+  json += "\"temp\":"    + String(weather_data.BME680_Temperature, 2) + ",";
+  json += "\"hum\":"     + String(weather_data.BME680_Humidity, 2) + ",";
+  json += "\"press\":"   + String(weather_data.BME680_Pressure, 2) + ",";
+  json += "\"date\":"    + String(weather_data.rtc_date) + ",";
+  json += "\"month\":"   + String(weather_data.rtc_month) + ",";
+  json += "\"year\":"    + String(weather_data.rtc_year) + ",";
+  json += "\"hour\":"    + String(weather_data.rtc_hour) + ",";
+  json += "\"min\":"     + String(weather_data.rtc_min) + ",";
+  json += "\"sec\":"     + String(weather_data.rtc_sec);
+  json += "}";
+
+  return json;
+}
+
+
+void gsmSendJSON()
+{
+  if (!gsmSendAT(
+      "AT+QIOPEN=\"TCP\",\"" + gsmServerIP + "\"," + gsmServerPort,
+      "CONNECT OK", 15000))
+  {
+    gsm_status.tcp_connected = false;
+    return;
+  }
+
+  gsm_status.tcp_connected = true;
+
+  gsm.println("AT+QISEND");
+  delay(300);
+
+  String payload = buildGSM_JSON();
+  USBSerial.println("GSM JSON:");
+  USBSerial.println(payload);
+  gsm.print(payload);
+  gsm.write(0x1A);
+
+  if (gsmSendAT("", "SEND OK", 10000))
+  {
+    gsm_status.last_tx_time = String(weather_data.rtc_hour) + ":" +
+                              String(weather_data.rtc_min) + ":" +
+                              String(weather_data.rtc_sec);
+                             
+      USBSerial.println("GSM SEND SUCCESS");
+      blinkGSMLED();     // Green
+  }
+  else
+  {
+      USBSerial.println("GSM SEND FAILED");
+      blinkGSMError();   // Red
+  } 
+
+  gsmSendAT("AT+QICLOSE", "OK", 5000);
+  gsm_status.tcp_connected = false;
+}
+
+
+void handleGSMStatus()
+{
+  String json = "{";
+  json += "\"power\":" + String(gsm_status.power_on) + ",";
+  json += "\"sim\":" + String(gsm_status.sim_ready) + ",";
+  json += "\"network\":" + String(gsm_status.network_registered) + ",";
+  json += "\"gprs\":" + String(gsm_status.gprs_attached) + ",";
+  json += "\"tcp\":" + String(gsm_status.tcp_connected) + ",";
+  json += "\"last_tx\":\"" + gsm_status.last_tx_time + "\",";
+  json += "\"error\":\"" + gsm_status.last_error + "\"";
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
 
 
 //-----------------------------------------------------------------------------------------------------------------
@@ -162,6 +360,38 @@ bool load_server_config_NVS(IPAddress &ip, uint16_t &port) {
 
 
 //-----------------------------------------------------------------------------------------------------------------
+// Function : Save and Load GSM Server IP/Port to/from NVS
+// Argument : GSM Server ip address and port
+// Return   : void
+//-----------------------------------------------------------------------------------------------------------------
+void save_gsm_config_NVS(String ip, String port)
+{
+  prefs.begin("gsmconfig", false);
+  prefs.putString("gsm_ip", ip);
+  prefs.putString("gsm_port", port);
+  prefs.end();
+}
+
+bool load_gsm_config_NVS(String &ip, String &port)
+{
+  prefs.begin("gsmconfig", true);
+
+  String savedIP   = prefs.getString("gsm_ip", "");
+  String savedPort = prefs.getString("gsm_port", "");
+
+  prefs.end();
+
+  if(savedIP.length())
+      ip = savedIP;
+
+  if(savedPort.length())
+      port = savedPort;
+
+  return (ip.length() > 0 && port.length() > 0);
+}
+
+
+//-----------------------------------------------------------------------------------------------------------------
 // Function : Save and Load Data Interval timinig to/from NVS
 // Argument : Server ip address and port
 // Return   : void
@@ -195,58 +425,74 @@ void handleLoginPage() {
     <head>
       <title>Login</title>
       <style>
-        body { 
-          font-family: Arial; 
-          margin: 0; 
-          height: 100vh; 
-          display: flex; 
-          justify-content: center; 
-          align-items: center; 
-          background: #f4f4f4;
+        body {
+          margin: 0;
+          height: 100vh;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          font-family: 'Segoe UI', Roboto, sans-serif;
+          background: linear-gradient(135deg, #1e3c72, #2a5298);
         }
-        .card { 
-          border: 1px solid #ddd; 
-          border-radius: 8px; 
-          padding: 24px; 
-          width: 320px; 
-          background: white;
-          box-shadow: 0px 4px 10px rgba(0,0,0,0.1);
+
+        .card {
+          background: rgba(255,255,255,0.1);
+          backdrop-filter: blur(12px);
+          border-radius: 16px;
+          padding: 30px;
+          width: 300px;
           text-align: center;
+          box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+          color: white;
         }
-        input { 
-          margin: 10px 0; 
-          padding: 10px; 
-          width: 100%; 
-          box-sizing: border-box; 
+
+        h2 {
+          margin-bottom: 20px;
         }
-        .btn { 
-          margin-top: 12px; 
-          padding: 10px; 
-          width: 100%; 
-          background: #007bff; 
-          color: white; 
-          border: none; 
-          border-radius: 4px; 
-          cursor: pointer; 
+
+        input {
+          width: 100%;
+          padding: 10px;
+          margin: 8px 0;
+          border-radius: 8px;
+          border: none;
+          outline: none;
         }
-        .btn:hover { background: #0056b3; }
+
+        .btn {
+          width: 100%;
+          margin-top: 10px;
+          background: #00c6ff;
+          border: none;
+          padding: 10px;
+          border-radius: 8px;
+          color: black;
+          font-weight: bold;
+          cursor: pointer;
+          transition: 0.3s;
+        }
+
+        .btn:hover {
+          background: #00a2d4;
+        }
       </style>
     </head>
+
     <body>
       <div class="card">
         <h2>Login</h2>
         <form action="/" method="get">
-          <input type="text" name="username" placeholder="Username" required><br>
-          <input type="password" name="password" placeholder="Password" required><br>
+          <input type="text" name="username" placeholder="Username" required>
+          <input type="password" name="password" placeholder="Password" required>
           <input class="btn" type="submit" value="Login">
         </form>
       </div>
     </body>
     </html>
   )rawliteral";
+
   server.send(200, "text/html", html);
 }
-
 //-----------------------------------------------------------------------------------------------------------------
 // Function : Logicn Page credential verifying and redirecting logic 
 // Argument : void
@@ -270,32 +516,83 @@ void handleDoLogin() {
 //-----------------------------------------------------------------------------------------------------------------
 // Live Data block (served separately for AJAX refresh)
 void handleLiveData() {
+
   String html = R"rawliteral(
-    <table class="kv">
-      <tr><td>CO (ppm)</td><td>%CO%</td></tr>
-      <tr><td>O₃ (ppm)</td><td>%O3%</td></tr>
-      <tr><td>NO₂ (ppm)</td><td>%NO2%</td></tr>
-      <tr><td>H₂S (ppm)</td><td>%H2S%</td></tr>
-      <tr><td>SO₂ (ppm)</td><td>%SO2%</td></tr>
-      <tr><td>NH₃ (ppm)</td><td>%NH3%</td></tr>
-      <tr><td>CO₂ (ppm)</td><td>%CO2%</td></tr>
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 12px;
+      }
 
-      <tr><td>PM2.5 (µg/m³)</td><td>%PM25%</td></tr>
-      <tr><td>PM10 (µg/m³)</td><td>%PM10%</td></tr>
+      .card {
+        background: rgba(255,255,255,0.1);
+        backdrop-filter: blur(8px);
+        border-radius: 12px;
+        padding: 12px;
+        color: #fff;
+        font-size: 14px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+      }
 
-      <tr><td>Ambient Light (Lux)</td><td>%LUX%</td></tr>
+      .value {
+        font-size: 18px;
+        font-weight: bold;
+      }
+    </style>
 
-      <tr><td>UV Raw</td><td>%UVRAW%</td></tr>
-      <tr><td>UV Index</td><td>%UV%</td></tr>
-      <tr><td>UV Irradiance</td><td>%UVIRR%</td></tr>
+    <div class="grid">
+      <div class="card">🌫 CO<div class="value">%CO%</div></div>
+      <div class="card">🧪 O₃<div class="value">%O3%</div></div>
+      <div class="card">🧪 NO₂<div class="value">%NO2%</div></div>
+      <div class="card">🧪 H₂S<div class="value">%H2S%</div></div>
+      <div class="card">🧪 SO₂<div class="value">%SO2%</div></div>
+      <div class="card">🧪 NH₃<div class="value">%NH3%</div></div>
+      <div class="card">🌍 CO₂<div class="value">%CO2%</div></div>
 
-      <tr><td>BME680 Temperature (°C)</td><td>%BMETEMP%</td></tr>
-      <tr><td>BME680 Humidity (%)</td><td>%BMEHUM%</td></tr>
-      <tr><td>BME680 Pressure (hPa)</td><td>%BMEPRESS%</td></tr>
+      <div class="card">🌫 PM2.5<div class="value">%PM25%</div></div>
+      <div class="card">🌫 PM10<div class="value">%PM10%</div></div>
 
-      <tr><td>Rain (mm)</td><td>%RAIN%</td></tr>
-    </table>
-  )rawliteral";
+      <div class="card">☀ Ambient Light (Lux)<div class="value">%LUX%</div></div>
+
+      
+      <div class="card">🌞 UV Raw<div class="value">%UVRAW%</div></div>
+      <div class="card">🌞 UV Index<div class="value">%UV%</div></div>
+      <div class="card">🌞 UV Irradiance<div class="value">%UVIRR%</div></div>
+
+      <div class="card">🌡 Temp<div class="value">%BMETEMP% °C</div></div>
+      <div class="card">💧 Humidity<div class="value">%BMEHUM% %</div></div>
+      <div class="card">ضغط Pressure<div class="value">%BMEPRESS%</div></div>
+
+      <div class="card">🌧 Rain<div class="value">%RAIN%</div></div>
+    </div>
+  )rawliteral";  
+  // String html = R"rawliteral(
+  //   <table class="kv">
+  //     <tr><td>CO (ppm)</td><td>%CO%</td></tr>
+  //     <tr><td>O₃ (ppm)</td><td>%O3%</td></tr>
+  //     <tr><td>NO₂ (ppm)</td><td>%NO2%</td></tr>
+  //     <tr><td>H₂S (ppm)</td><td>%H2S%</td></tr>
+  //     <tr><td>SO₂ (ppm)</td><td>%SO2%</td></tr>
+  //     <tr><td>NH₃ (ppm)</td><td>%NH3%</td></tr>
+  //     <tr><td>CO₂ (ppm)</td><td>%CO2%</td></tr>
+
+  //     <tr><td>PM2.5 (µg/m³)</td><td>%PM25%</td></tr>
+  //     <tr><td>PM10 (µg/m³)</td><td>%PM10%</td></tr>
+
+  //     <tr><td>Ambient Light (Lux)</td><td>%LUX%</td></tr>
+
+  //     <tr><td>UV Raw</td><td>%UVRAW%</td></tr>
+  //     <tr><td>UV Index</td><td>%UV%</td></tr>
+  //     <tr><td>UV Irradiance</td><td>%UVIRR%</td></tr>
+
+  //     <tr><td>BME680 Temperature (°C)</td><td>%BMETEMP%</td></tr>
+  //     <tr><td>BME680 Humidity (%)</td><td>%BMEHUM%</td></tr>
+  //     <tr><td>BME680 Pressure (hPa)</td><td>%BMEPRESS%</td></tr>
+
+  //     <tr><td>Rain (mm)</td><td>%RAIN%</td></tr>
+  //   </table>
+  // )rawliteral";
 
   html.replace("%LUX%", String(weather_data.lux, 2));
   html.replace("%PM25%", String(weather_data.pm2_5, 2));
@@ -305,7 +602,7 @@ void handleLiveData() {
   html.replace("%H2S%",  String(weather_data.H2S_ppm,3));
   html.replace("%NH3%",  String(weather_data.NH3_ppm,2));
   html.replace("%NO2%",  String(weather_data.NO2_ppm,3));
-  html.replace("%O3%",   String(weather_data.O3_ppm,2));
+  html.replace("%O3%",   String(weather_data.O3_ppm,3));
   html.replace("%SO2%",  String(weather_data.SO2_ppm,3));
   html.replace("%RAIN%", "0.0");
   html.replace("%UVRAW%", String(weather_data.uv_raw));
@@ -346,7 +643,12 @@ void handleRoot() {
         <meta charset="utf-8">
         <title>GMC AQI</title>
         <style>
-          body { font-family: Arial, sans-serif; margin: 24px; }
+          body {
+            margin: 0;
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: white;
+          }
           h1 { margin-bottom: 4px; }
           .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 12px 0; }
           .row { margin: 8px 0; }
@@ -367,7 +669,12 @@ void handleRoot() {
         <div class="card">
           <h2>Live Sensor Data</h2>
           <div id="live-data">Loading...</div>
-          <small>Values refresh every 5 seconds. Lux updates live; the rest are dummy placeholders.</small>
+          <small style="color: white;">Values refresh every 5 seconds. Lux updates live; the rest are dummy placeholders.</small>
+        </div>
+
+        <div class="card">
+          <h2>GSM Status</h2>
+          <pre id="gsm-status">Loading...</pre>
         </div>
 
         <div class="card">
@@ -383,7 +690,9 @@ void handleRoot() {
             <h3>RTC Date & Time</h3>
             <div class="row"><label>Date (YYYY-MM-DD):</label><input type="date" name="date"></div>
             <div class="row"><label>Time (HH:MM:SS):</label><input type="time" name="time" step="1"></div>
-
+            <h3>GSM Server Configuration</h3>
+            <div class="row"><label>GSM Server IP:</label><input type="text" name="gsmip" value="%GSMIP%"></div>
+            <div class="row"><label>GSM Server Port:</label><input type="text" name="gsmport" value="%GSMPORT%"></div>
             <h3>Data Interval</h3>
             <div class="row"><label>Interval (in minutes):</label><input type="number" name="datainterval" value="%DATAINTERVAL%"></div>
 
@@ -407,6 +716,28 @@ void handleRoot() {
           }
           setInterval(fetchLiveData, 5000);
           fetchLiveData();
+
+          /* -------- GSM STATUS -------- */
+          function fetchGSM() {
+            fetch('/gsmstatus')
+              .then(r => r.json())
+              .then(d => {
+                let txt =
+                  "Power       : " + (d.power ? "OK" : "FAIL") + "\\n" +
+                  "SIM Ready   : " + (d.sim ? "OK" : "FAIL") + "\\n" +
+                  "Network     : " + (d.network ? "REGISTERED" : "NO") + "\\n" +
+                  "GPRS        : " + (d.gprs ? "ATTACHED" : "NO") + "\\n" +
+                  "TCP Link    : " + (d.tcp ? "CONNECTED" : "IDLE") + "\\n" +
+                  "Last TX     : " + d.last_tx + "\\n" +
+                  "Last Error  : " + d.error;
+                  document.getElementById("gsm-status").innerText = txt;
+                })
+                .catch(err => {
+                  document.getElementById("gsm-status").innerText = "GSM fetch error";
+                });
+              }
+            setInterval(fetchGSM, 5000);
+            fetchGSM();
         </script>
       </body>
       </html>
@@ -417,6 +748,8 @@ void handleRoot() {
     html.replace("%SUBNET%", subnet.toString());
     html.replace("%SERVERIP%", serverIP.toString());
     html.replace("%SERVERPORT%", String(serverPort));
+    html.replace("%GSMIP%", gsmServerIP);
+    html.replace("%GSMPORT%", gsmServerPort);
     html.replace("%DATAINTERVAL%", String(DATA_INTERVAL));
 
     server.send(200, "text/html", html);
@@ -431,6 +764,9 @@ void handleRoot() {
 // Return   : void
 //-----------------------------------------------------------------------------------------------------------------
 void handleSet() {
+
+
+
   if (server.hasArg("ip") && server.hasArg("gateway") && server.hasArg("subnet")) {
     IPAddress newIP, newGateway, newSubnet;
 
@@ -454,7 +790,14 @@ void handleSet() {
           save_server_config_NVS(serverIP, serverPort);
         }
       }
+      // GSM Server config
+      if (server.hasArg("gsmip") && server.hasArg("gsmport"))
+      {
+          gsmServerIP   = server.arg("gsmip");
+          gsmServerPort = server.arg("gsmport");
 
+          save_gsm_config_NVS(gsmServerIP, gsmServerPort);
+      }
       // RTC Config
       if (server.hasArg("date") && server.hasArg("time")) 
       {
@@ -497,6 +840,8 @@ void handleSet() {
       msg += "<p><b>Subnet:</b> " + subnet.toString() + "</p>";
       msg += "<p><b>Server IP:</b> " + serverIP.toString() + "</p>";
       msg += "<p><b>Server Port:</b> " + String(serverPort) + "</p>";
+      msg += "<p><b>GSM Server IP:</b> " + gsmServerIP + "</p>";
+      msg += "<p><b>GSM Server Port:</b> " + gsmServerPort + "</p>";
       msg += "<form action=\"/restart\" method=\"get\">";
       msg += "<input type=\"submit\" value=\"Restart ESP32\">";
       msg += "</form>";
@@ -554,18 +899,18 @@ void handleOTAEnable() {
 //-----------------------------------------------------------------------------------------------------------------
 void Ethernet_MAC_Address()
 {
-  Serial.print(F("Ethernet MAC: "));
+  USBSerial.print(F("Ethernet MAC: "));
   for (int i = 0; i < 6; i++) {
-    Serial.print(mac[i], HEX);
-    if (i < 5) Serial.print(":");
+    USBSerial.print(mac[i], HEX);
+    if (i < 5) USBSerial.print(":");
   }
-  Serial.println();
+  USBSerial.println();
 }
 
 bool tryWiFiConnection(unsigned long timeout_ms) {
   WiFi.mode(WIFI_STA);  // Ensure STA mode
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print(F("Trying to connect to WiFi"));
+  USBSerial.print(F("Trying to connect to WiFi"));
 
   unsigned long startTime = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - startTime < timeout_ms) {
@@ -574,13 +919,13 @@ bool tryWiFiConnection(unsigned long timeout_ms) {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println(F("\nWiFi connected!"));
-    Serial.println("IP Address: " + WiFi.localIP().toString());
+    USBSerial.println(F("\nWiFi connected!"));
+    USBSerial.println("IP Address: " + WiFi.localIP().toString());
     isWiFiConnected = true;
     return true;
   } else
   {
-    Serial.println(F("\nWiFi connection failed."));
+    USBSerial.println(F("\nWiFi connection failed."));
     isWiFiConnected = false;
     return false;
   }
@@ -603,11 +948,12 @@ void startWebServer()
     server.on("/restart", handleRestart);
     server.on("/ota", handleOTAEnable);       // OTA Route
     server.on("/livedata", handleLiveData);  // << NEW
+    server.on("/gsmstatus", handleGSMStatus);
     server.begin();
     webServerStarted = true;
     if (WiFi.status() == WL_CONNECTED) 
     {
-      Serial.println("Web server started at: http://" + WiFi.localIP().toString());
+      USBSerial.println("Web server started at: http://" + WiFi.localIP().toString());
     }
   }
 }
@@ -618,18 +964,16 @@ void startWebServer()
 //-----------------------------------------------------------------------------------------------------------------
 void setup() 
 {
-  Serial.begin(115200);
+  USBSerial.begin(115200);
 
-  //while (!Serial) 
-  //{
-   //delay(10);                                   // Wait for USB connection
-  //}
-  //Serial.println("USB CDC Serial Connected");   // UART on USB
+  pixel.begin();
+  pixel.clear();
+  pixel.show();
   
-  Serial.print(F("APB CLK SET = "));            // To know our ESP32 operates on defined frequency
-  Serial.println(rtc_clk_apb_freq_get());
+  USBSerial.print(F("APB CLK SET = "));            // To know our ESP32 operates on defined frequency
+  USBSerial.println(rtc_clk_apb_freq_get());
 
-  delay(1000);                                  // Initialization delay
+  delay(1000);                                  // Initialization delay 
 
   pinMode(W5500_RST, OUTPUT);
   digitalWrite(W5500_RST, HIGH);
@@ -637,14 +981,13 @@ void setup()
   pinMode(SDA_PIN, OUTPUT);   
   pinMode(SCL_PIN, OUTPUT);
 
+  gsm_Init();
+
   Wire.begin(SDA_PIN, SCL_PIN);     // I2C initialization
 
-  gsmSetup();
-
   BME680_Init();                    // BME680 initialization                                              
-
-  // WiFi initalization
-  tryWiFiConnection(3000);
+  
+  tryWiFiConnection(3000);          // WiFi initalization
    if (isWiFiConnected) {
     startWebServer();
   }
@@ -656,21 +999,24 @@ void setup()
   veml7700_init();                  // Ambient Light initialization
   init_LTR390();                    // UV radiation sensor LTR390 initialization
 
-  sps_30_init();                    // PM sensor initialization
+  sds011_init();                    // PM sensor initialization
   S300E_Init();                     // CO2 sensor initialization
   initRTC();                        // RTC initialization 
 
   load_ethernet_config_NVS(ip, gateway, subnet);      // Saving Ethernet Configuration to NVS
   load_server_config_NVS(serverIP, serverPort);       // Saving TCP Server Configuration to NVS
+  load_gsm_config_NVS(gsmServerIP, gsmServerPort);
   DATA_INTERVAL = load_data_interval_NVS();           // Saving Data Interval to NVS
 
   Ethernet.init(W5500_CS);                            // Ethernet Module initialization 
   Ethernet.begin(mac, ip, gateway, gateway, subnet);  // Assigning Default MAC, IP Address, Gateway, Subnet to Ethernet Module
 
-  Serial.println(F("Ethernet started:"));
-  Serial.print("Local IP: "); Serial.println(Ethernet.localIP());
-  Serial.print("Server IP: "); Serial.println(serverIP);
-  Serial.print("Server Port: "); Serial.println(serverPort);
+  USBSerial.println(F("Ethernet started:"));
+  USBSerial.print("Local IP: "); USBSerial.println(Ethernet.localIP());
+  USBSerial.print("Server IP: "); USBSerial.println(serverIP);
+  USBSerial.print("Server Port: "); USBSerial.println(serverPort);
+  USBSerial.println("GSM IP: " + gsmServerIP);
+  USBSerial.println("GSM Port: " + gsmServerPort);
 
   // Initializing Web Page Service 
   server.on("/", handleRoot);
@@ -680,7 +1026,7 @@ void setup()
   server.on("/livedata", handleLiveData);
   
   server.begin();
-  Serial.println("Web server started at: http://" + WiFi.localIP().toString());
+  USBSerial.println("Web server started at: http://" + WiFi.localIP().toString());
 
 
   //Initialize OTA related box
@@ -699,8 +1045,9 @@ void setup()
 //-----------------------------------------------------------------------------------------------------------------
 void loop() 
 {
-  //if (isWiFiConnected) 
+ 
   {
+    readMeasurement(); 
     server.handleClient();
   }
 
@@ -711,7 +1058,8 @@ void loop()
     //OTA begin() - Initialization + Network listening begin
     ArduinoOTA.begin();
 
-    Serial.println("ESP32 machine is ready for OTA");
+    USBSerial.println("ESP32 machine is ready for OTA");
+
     //Time stamp when device in OTA mode
     unsigned long OTA_START_TIME = millis();
 
@@ -725,7 +1073,7 @@ void loop()
     //Reset Flag & stop OTA listening - Timeout
     ArduinoOTA.end();    
     OTA_ENABLE_FLAG = false;
-    Serial.println("[OTA] OTA window expired. Resuming normal operation.");
+    USBSerial.println("[OTA] OTA window expired. Resuming normal operation.");
     esp_task_wdt_reset();
 
     // Add actual OTA setup here (if using ArduinoOTA or ElegantOTA)
@@ -749,11 +1097,11 @@ void loop()
     ssl_timer.FIVE_SECOND_ELAPSED_FLAG = false;
     
     esp_task_wdt_reset();
+    USBSerial.println(DEVICE_ID); 
 
     veml7700_task();                          // Ambient light data 
     read_LTR390();                            // UV radiation data
     readRTCDateTimeToStruct(&weather_data);   // RTC data
-
     esp_task_wdt_reset();
     
   }
@@ -765,12 +1113,11 @@ void loop()
     //RESET FLAG 
     ssl_timer.TEN_SECOND_ELAPSED_FLAG = false;
 
-    
     esp_task_wdt_reset();
 
-    sps_30_data();          // PM sensor data
+    //sps_30_data();          // PM sensor data
     BME680_Process();       // BME680 data
-
+    USBSerial.println(buildGSM_JSON());
     // WiFi reconnection logic
     if((!isWiFiConnected) || ((WiFi.status() != WL_CONNECTED)))
     {
@@ -784,13 +1131,11 @@ void loop()
       } 
       else 
       {
-        Serial.println(F("WiFi connection failed. WL_CONNECT_FAILED"));
+        USBSerial.println(F("WiFi connection failed. WL_CONNECT_FAILED"));
       } 
     
     }
-
     cleanupClients();
-    
     esp_task_wdt_reset();
   }
 
@@ -807,13 +1152,14 @@ void loop()
     gas_sensor_task();      // Gases sensor data
     gas_sensor_print();     // Print gases sensor data
     S300E_data();           // CO2 data
-
+    
     //increase 30 sec counter
     COUNTER_30SEC++;
     if(COUNTER_30SEC >= (DATA_INTERVAL * 2))
     {
       //Send_Data_If_Ethernet_Connected();
-      gsmProcessLoop();
+      // gsmProcessLoop();
+      gsmSendJSON();
       COUNTER_30SEC = 0;
     }
 
@@ -834,7 +1180,6 @@ void loop()
     //Clear Watchdog Frequently....
     esp_task_wdt_reset();
 
-  
     esp_task_wdt_reset();
   }
 
@@ -849,7 +1194,11 @@ void loop()
     //Clear Watchdog Frequently....
     esp_task_wdt_reset();
     
-    
+    USBSerial.print("PM2.5: ");
+    USBSerial.println(weather_data.pm2_5);
+
+    USBSerial.print("PM10: ");
+    USBSerial.println(weather_data.pm10);
     
     esp_task_wdt_reset();
 
@@ -867,10 +1216,10 @@ void Send_Data_If_Ethernet_Connected()
 {
   if (!ethernetclient.connected()) 
   {
-    Serial.println(F("Connecting to server..."));
+    USBSerial.println(F("Connecting to server..."));
     if (ethernetclient.connect(serverIP, serverPort)) 
     {
-      Serial.println(F("Connected to server."));
+      USBSerial.println(F("Connected to server."));
 
       String message = "*";
       String crc_input = "";
@@ -905,13 +1254,13 @@ void Send_Data_If_Ethernet_Connected()
       message += "#\r\n";
 
       ethernetclient.println(message);
-      Serial.println("TCP_SEND: " + message);
+      USBSerial.println("TCP_SEND: " + message);
       ethernetclient.stop();
     }
   }
   else
   {
-    Serial.println(F("Failed to connect to server."));
+    USBSerial.println(F("Failed to connect to server."));
   }
 }
 
@@ -928,6 +1277,3 @@ uint8_t xor_checksum(const char *data, uint16_t length)
     }
     return checksum;
 }
-
-
-

@@ -1,3 +1,4 @@
+#include "debug_serial.h"
 #include <Arduino.h>
 #include <rtc_s.h>
 #include <data_structure.h>
@@ -44,7 +45,7 @@ void readRTCDateTimeToStruct(weather_station_global_structure_t *weather_data) {
 
     Wire.requestFrom(DS3231_ADDRESS, 7);
     if (Wire.available() < 7) {
-        Serial.println(F("RTC read failed: insufficient data."));
+        USBSerial.println(F("RTC read failed: insufficient data."));
         rtcValid = false;
     }
     uint8_t sec = bcdToDec(Wire.read());
@@ -65,18 +66,18 @@ void readRTCDateTimeToStruct(weather_station_global_structure_t *weather_data) {
     weather_data->rtc_year = year;
 
     // Print the date and time to Serial Monitor
-    Serial.print(F("Date: "));
-    Serial.print(date);
-    Serial.print(F("/"));
-    Serial.print(month);
-    Serial.print(F("/20"));
-    Serial.print(year);
-    Serial.print(F("  Time: "));
-    Serial.print(hour);
-    Serial.print(F(":"));
-    Serial.print(min);
-    Serial.print(F(":"));
-    Serial.println(sec);
+    USBSerial.print(F("Date: "));
+    USBSerial.print(date);
+    USBSerial.print(F("/"));
+    USBSerial.print(month);
+    USBSerial.print(F("/20"));
+    USBSerial.print(year);
+    USBSerial.print(F("  Time: "));
+    USBSerial.print(hour);
+    USBSerial.print(F(":"));
+    USBSerial.print(min);
+    USBSerial.print(F(":"));
+    USBSerial.println(sec);
     }
 
     else {

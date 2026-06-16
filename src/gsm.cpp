@@ -1,3 +1,4 @@
+#include "debug_serial.h"
 #include "gsm.h"
 #include "esp_task_wdt.h"           // Watchdog reset handling
 
@@ -53,7 +54,7 @@ bool sendAT(String cmd, String expected, uint32_t timeout)
             // Check for expected response
             if (resp.indexOf(expected) >= 0)
             {
-                Serial.println(resp);
+                USBSerial.println(resp);
                 return true;
             }
         }
@@ -61,7 +62,7 @@ bool sendAT(String cmd, String expected, uint32_t timeout)
     }
 
     
-    Serial.println(resp);       // Print full response on timeout
+    USBSerial.println(resp);       // Print full response on timeout
     return false;
 }
 
@@ -125,13 +126,13 @@ bool isTcpConnected()
             if (resp.indexOf("CONNECT") >= 0 ||
                 resp.indexOf("CONNECTED") >= 0)
             {
-                Serial.println("TCP already connected");
+                USBSerial.println("TCP already connected");
                 return true;
             }
         }
     }
 
-    Serial.println(resp);
+    USBSerial.println(resp);
     return false;
 }
 
@@ -237,12 +238,12 @@ void gsmSetup()
     GSM_Serial.begin(115200, SERIAL_8N1, GSM_RX_PIN, GSM_TX_PIN);
     delay(3000);
 
-    Serial.println("Initializing GSM...");
+    USBSerial.println("Initializing GSM...");
     if (!gsmInit()){
-        Serial.println("GSM Init Failed");
+        USBSerial.println("GSM Init Failed");
     }
     else {
-        Serial.println("GSM Ready");
+        USBSerial.println("GSM Ready");
     }
 }
 
@@ -253,22 +254,22 @@ void gsmProcessLoop()
 {
     String payload = buildJSON();
 
-    Serial.println("Connecting TCP...");
+    USBSerial.println("Connecting TCP...");
     if (tcpConnect())
     {
-        Serial.println("Sending Data:");
-        Serial.println(payload);
+        USBSerial.println("Sending Data:");
+        USBSerial.println(payload);
 
         if (tcpSend(payload))
         {
-            Serial.println("Upload Success");
+            USBSerial.println("Upload Success");
         } else {
-            Serial.println("Send Failed");
+            USBSerial.println("Send Failed");
         }
         tcpClose();
     }
     else
     {
-        Serial.println("TCP Connect Failed");
+        USBSerial.println("TCP Connect Failed");
     }
 }

@@ -1,4 +1,5 @@
-#include "s300e.h"
+#include "debug_serial.h"
+#include "s300e.h"//CO2 SENSOR
 #include "data_structure.h"
 
 extern weather_station_global_structure_t weather_data;
@@ -13,7 +14,7 @@ void S300E_Init(void)
 }
 
 /* ================= READ ================= */
-bool S300E_ReadCO2(uint16_t *ppm)
+bool S300E_ReadCO2(uint16_t *ppm)//used for read [CO2 ==> true → CO₂ successfully read or false → error]
 {
     if (ppm == NULL)
     {
@@ -23,7 +24,7 @@ bool S300E_ReadCO2(uint16_t *ppm)
     /* Send read command */
     Wire.beginTransmission(S300E_ADDR);
     Wire.write(CMD_READ);
-    if (Wire.endTransmission(true) != 0)
+    if (Wire.endTransmission(true) != 0)//Safety check
     {
         return false;
     }
@@ -62,13 +63,13 @@ void S300E_data(void)
     {
         weather_data.CO2_ppm = co2_ppm;
 
-        Serial.print("CO2 = ");
-        Serial.print(weather_data.CO2_ppm);
-        Serial.println(" ppm");
+        USBSerial.print("CO2 = ");
+        USBSerial.print(weather_data.CO2_ppm);
+        USBSerial.println(" ppm");
     }
     else
     {
-        Serial.println("CO2 read error");
+        USBSerial.println("CO2 read error");
     }
 
     delay(SAMPLE_TIME_MS);

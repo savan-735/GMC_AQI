@@ -1,4 +1,7 @@
+#include "debug_serial.h"
 #include "gas_sensor.h"
+#include "esp_task_wdt.h"
+
 
 extern weather_station_global_structure_t weather_data;
 
@@ -10,8 +13,8 @@ static uint8_t cmdRequest[9] = { 0xFF, 0x01, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00,
 
 // ---------------- MUX MAP ----------------
 // MUX IC function logic for Selection (S0, S1) according to datasheet
-static const bool S0_SELECT[6] = {0,1,0,1,0,1};
-static const bool S1_SELECT[6] = {0,0,1,1,0,0};
+static const bool S0_SELECT[6] = {0,1,0,1,0,1};//S0
+static const bool S1_SELECT[6] = {0,0,1,1,0,0};//S1
 
 // ---------------- CHECKSUM ----------------
 // Checksum Calculation 
@@ -46,7 +49,16 @@ static void selectSensor(uint8_t sensor)
 // ---------------- READ FRAME ----------------
 // Function to Read & Parse 13-byte response frame from the active sensor
 static bool readGasFrame(uint8_t sensorID)
-{
+{   
+    // ❗ SDS OFF
+    // digitalWrite(SDS_TX_CTRL, LOW);
+    // delay(2000);
+
+    // // ❗ UART buffer clear karo (bahut important)
+    // while (Gas_Sensor_Serial.available()) {
+    //     Gas_Sensor_Serial.read();
+    // }
+
     uint8_t buffer[13] = {0};
     uint8_t index = 0;
     uint32_t start = millis();
@@ -139,8 +151,8 @@ static bool readGasFrame(uint8_t sensorID)
 
         // SO2 sensor
         case 4:
-            weather_data.SO2_mg    = consentration2 / 1000.0f; 
-            weather_data.SO2_ppm   = consentration1 / 1000.0f;
+            weather_data.SO2_mg    = consentration2 / 100.0f; 
+            weather_data.SO2_ppm   = consentration1 / 100.0f;
             weather_data.SO2_T     = temp;            
             weather_data.SO2_H     = hum;
         break;
@@ -156,8 +168,11 @@ static bool readGasFrame(uint8_t sensorID)
         default:
         break;
     }
+
     return true;
 }
+
+
 
 // ---------------- INIT ----------------
 void gas_sensor_init(void)
@@ -172,10 +187,11 @@ void gas_sensor_init(void)
 
     Gas_Sensor_Serial.begin(9600, SERIAL_8N1, GAS_RX_PIN, GAS_TX_PIN);
     
-    Serial.println("\nGas Multiplexer System Ready\n");
+    USBSerial.println("\nGas Multiplexer System Ready\n");
 }
 
 // ---------------- TASK (loop logic) ----------------
+
 void gas_sensor_task(void)
 {
     for (uint8_t i = 0; i < NUM_SENSORS; i++)
@@ -193,12 +209,12 @@ void gas_sensor_task(void)
 // ---------------- PRINT ----------------
 void gas_sensor_print(void)
 {
-    Serial.println("================================");
-    Serial.printf("CO   : %.2f mg/m3   %.2f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.CO_mg,  weather_data.CO_ppm,  weather_data.CO_T,  weather_data.CO_H);
-    Serial.printf("O3   : %.3f mg/m3   %.3f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.O3_mg,  weather_data.O3_ppm,  weather_data.O3_T,  weather_data.O3_H);
-    Serial.printf("NO2  : %.3f mg/m3   %.3f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.NO2_mg, weather_data.NO2_ppm, weather_data.NO2_T, weather_data.NO2_H);
-    Serial.printf("H2S  : %.3f mg/m3   %.3f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.H2S_mg, weather_data.H2S_ppm, weather_data.H2S_T, weather_data.H2S_H);
-    Serial.printf("SO2  : %.3f mg/m3   %.3f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.SO2_mg, weather_data.SO2_ppm, weather_data.SO2_T, weather_data.SO2_H);
-    Serial.printf("NH3  : %.2f mg/m3   %.2f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.NH3_mg, weather_data.NH3_ppm, weather_data.NH3_T, weather_data.NH3_H);
-    Serial.println("================================\n");
+    USBSerial.println("================================");
+    USBSerial.printf("CO   : %.2f mg/m3   %.2f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.CO_mg,  weather_data.CO_ppm,  weather_data.CO_T,  weather_data.CO_H);
+    USBSerial.printf("O3   : %.3f mg/m3   %.3f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.O3_mg,  weather_data.O3_ppm,  weather_data.O3_T,  weather_data.O3_H);
+    USBSerial.printf("NO2  : %.3f mg/m3   %.3f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.NO2_mg, weather_data.NO2_ppm, weather_data.NO2_T, weather_data.NO2_H);
+    USBSerial.printf("H2S  : %.3f mg/m3   %.3f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.H2S_mg, weather_data.H2S_ppm, weather_data.H2S_T, weather_data.H2S_H);
+    USBSerial.printf("SO2  : %.3f mg/m3   %.3f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.SO2_mg, weather_data.SO2_ppm, weather_data.SO2_T, weather_data.SO2_H);
+    USBSerial.printf("NH3  : %.2f mg/m3   %.2f ppm   T=%.2f°C  H=%.2f%%\n",  weather_data.NH3_mg, weather_data.NH3_ppm, weather_data.NH3_T, weather_data.NH3_H);
+    USBSerial.println("================================\n");
 }
